@@ -1,5 +1,5 @@
 [package]
-name = "minparse"
+name = "minparser"
 version = "0.1.0"
 description = "Simple parsing functions"
 edition = "2021"

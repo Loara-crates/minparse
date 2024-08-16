@@ -1,3 +1,3 @@
-# Minparse
+# Minparser
 Simple parsing functions
 

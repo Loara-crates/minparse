@@ -1,5 +1,5 @@
 /*
- * Minparse Simple parsing functions
+ * Minparser Simple parsing functions
  *
  * Copyright (C) 2024 Paolo De Donato
  *
