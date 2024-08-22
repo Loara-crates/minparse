@@ -89,6 +89,30 @@ impl<T> AppenderExt<T> for alloc::vec::Vec<T>{
     }
 }
 
+/// A trivial appender that doesn't store anything.
+pub struct DiscardAppender<T>{
+    mk : core::marker::PhantomData<T>,
+}
+
+impl<T> Clone for DiscardAppender<T>{
+    fn clone(&self) -> Self{
+        Self{
+            mk : self.mk.clone(),
+        }
+    }
+}
+
+impl<T> Copy for DiscardAppender<T>{}
+
+impl<T> Appender<T> for DiscardAppender<T> {
+    fn new_empty() -> Self{
+        Self{
+            mk : core::marker::PhantomData,
+        }
+    }
+    fn push(&mut self, _i : T){}
+}
+
 /// An integer appender.
 ///
 /// When `T` implements `Default`, `AddAssign<T>` and `MulAssign<usize>` then `NumAppender<T, N>`
@@ -96,15 +120,29 @@ impl<T> AppenderExt<T> for alloc::vec::Vec<T>{
 /// [pushing](Appender::push) `s` in `self` updates `t` into `(t * N) + s`.
 ///
 /// This struct is useful when you want to parse an integer from a text file.
-pub struct NumAppender<T, const N : usize>(pub T);
+pub struct NumAppender<T, const N : u32>(pub Option<T>);
 
-impl<T, const N : usize> Appender<T> for NumAppender<T, N> where T : core::ops::AddAssign<T> + core::ops::MulAssign<usize> + Default {
+impl<T, const N : u32> NumAppender<T, N>{
+    /// Tests if it is empty.
+    ///
+    /// Returns `true` if and only if no value has been pushed.
+    pub fn is_empty(&self) -> bool{
+        self.0.is_none()
+    }
+}
+
+impl<T, const N : u32> Appender<T> for NumAppender<T, N> where T : core::ops::AddAssign<T> + core::ops::MulAssign<u32>  {
     fn new_empty() -> Self{
-        Self(T::default())
+        Self(None)
     }
     fn push(&mut self, i : T){
-        self.0 *= N;
-        self.0 += i;
+        if let Some(c) = &mut self.0 {
+            *c *= N;
+            *c += i;
+        }
+        else{
+            self.0 = Some(i);
+        }
     }
 }
 
@@ -149,7 +187,7 @@ impl<I, F> DefLine<I, F> where I : Iterator<Item = char>, F : Default + Clone {
     }
 }
 
-impl<I : Iterator<Item = char>, F : Clone> DefLine<I, F> {
+impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
     /// Creates a new [DefLine] with the specified iterator and file.
     pub fn new_file<J : IntoIterator<IntoIter = I>>(it : J, f : F) -> Self {
         Self{
@@ -204,7 +242,7 @@ impl<I : Iterator<Item = char>, F : Clone> DefLine<I, F> {
     }
 }
 
-impl<I : Iterator<Item = char>, F : Clone> DefLine<Peekable<I>, F> {
+impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     /// Like [DefLine::next_pos] but doesn't remove the character from the underlying iterator.
     pub fn peek_pos(&mut self) -> Pos<Option<char>, F> {
         return Pos::new_pos(self.iter.peek().copied(), self.file.clone(), self.r, self.c);
@@ -238,7 +276,7 @@ impl<I : Iterator<Item = char>, F : Clone> DefLine<Peekable<I>, F> {
     /// ``ControlFlow::Continue(k)`` then `ch` is discarded and `k` is pushed into an accumulator of type `V`.
     /// When `f(ch)` returns instead `ControlFlow::Break` then `ch` is not discarded and the used
     /// accumulator is returned.
-    pub fn grab_cf<K, V : Appender<K>, MF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut f : MF) -> Pos<V, F> {
+    pub fn grab_cf<V : Appender<K>, K, MF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut f : MF) -> Pos<V, F> {
         let mut ret = V::new_empty();
         let pos = self.peek_pos().pos().clone();
         loop {
@@ -274,7 +312,7 @@ impl<I : Iterator<Item = char>, F : Clone> DefLine<Peekable<I>, F> {
     /// If the returned container is not empty then the returned position is exactly the position
     /// of the first *nonspace* appended character, otherwise it is the position of the first
     /// character that terminated the accumulation.
-    pub fn cap_ht_cf<K, V : AppenderExt<K>, SP : FnMut(char) -> bool, CF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut sp : SP, mut cf : CF) -> Pos<V, F> {
+    pub fn cap_ht_cf<V : AppenderExt<K>, K, SP : FnMut(char) -> bool, CF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut sp : SP, mut cf : CF) -> Pos<V, F> {
         let mut ret = V::new_empty();
         let mut spcs = V::new_empty();
 
@@ -322,6 +360,44 @@ impl<I : Iterator<Item = char>, F : Clone> DefLine<Peekable<I>, F> {
     ///whitespace.
     pub fn cap_spaces_nl<V : AppenderExt<char>>(&mut self) -> Pos<V, F> {
         self.cap_ht_cf(crate::predicates::is_whitespace, |x| if x == '\n' {ControlFlow::Break(())} else {ControlFlow::Continue(x)})
+    }
+
+    ///Parse an identifier.
+    ///
+    ///Gets an identifier defined as a contiguous sequence of alphabetic characters as defined in
+    ///[predicates::is_alphabetic].
+    pub fn get_ident<V : Appender<char>>(&mut self) -> Pos<V, F> {
+        self.grab_until(crate::predicates::is_alphabetic)
+    }
+    ///Parses a decimal number.
+    pub fn get_num(&mut self) -> Pos<Option<u32>, F> {
+        let ret = self.grab_cf::<NumAppender<u32, 10>, _, _>(|c| {
+            match c.to_digit(10) {
+                None => ControlFlow::Break(()),
+                Some(n) => ControlFlow::Continue(n),
+            }
+        });
+        ret.map(|t| t.0)
+    }
+    /// Parses an hexadecimal number (without the prefix).
+    pub fn get_hex_num(&mut self) -> Pos<Option<u32>, F> {
+        let ret = self.grab_cf::<NumAppender<u32, 16>, _, _>(|c| {
+            match c.to_digit(16) {
+                None => ControlFlow::Break(()),
+                Some(n) => ControlFlow::Continue(n),
+            }
+        });
+        ret.map(|t| t.0)
+    }
+    /// Discards whitespaces and newline characters.
+    ///
+    /// Removes any whitespace according to [predicates::is_whitespace]
+    pub fn discard_spaces(&mut self){
+        self.grab_until::<DiscardAppender<char>, _ >(crate::predicates::is_whitespace);
+    }
+    /// Discards whitespaces but preserves newline characters. 
+    pub fn nl_discard_spaces(&mut self){
+        self.grab_until::<DiscardAppender<char>, _>(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c));
     }
 }
 
