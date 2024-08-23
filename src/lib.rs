@@ -36,6 +36,11 @@
 //! A [`DefLine`] is a sort of "iterator" that returns `Pos<Option<char>, FILE>` in
 //! place of `Option<char>`. Moreover, it defines a lot of useful functions for parsing tokens from
 //! a text source.
+//!
+//! This crate assumes a single `\n` character separates lines in a text file. If you need to deal
+//! with `char` iterators that use `\r\n` as a line delimiter (or both `\n` and `\r\n`)
+//! you can use the [`NLIterator`] iterator wrapper to automatically discard any `\r` character so
+//! that `\r\n` becomes just `\n`.
 #![warn(missing_docs)]
 #![no_std]
 

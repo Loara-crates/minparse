@@ -23,6 +23,36 @@ use core::iter::{Iterator, IntoIterator, Peekable};
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+/// An iterator wrapper that removes `\r` characters.
+///
+/// This crate assumes that `\n` separates lines, so if your iterator uses `\r\n` as line delimiter you
+/// can use this wrapper to normalize it to `\n`.
+pub struct NLIterator<I>{
+    iter : I,
+}
+
+impl<I> NLIterator<I>{
+    /// Creates a new `NLIterator` from an already existent iterator.
+    pub fn new(iter : I) -> Self {
+        Self {iter}
+    }
+}
+
+impl<I> Iterator for NLIterator<I> where I : Iterator<Item = char>{
+    type Item = char;
+
+    fn next(&mut self) -> Option<char>{
+        loop{
+            match self.iter.next(){
+                None => return None,
+                Some(ch) => if ch != '\r' {
+                    return Some(ch);
+                },
+            }
+        }
+    }
+}
+
 /// A sequential container that can accept new objects.
 ///
 /// This trait is used by [DefLine::grab_cf] and similar methods in [DefLine].
@@ -87,30 +117,6 @@ impl<T> AppenderExt<T> for alloc::vec::Vec<T>{
     fn clear(&mut self){
         self.clear();
     }
-}
-
-/// A trivial appender that doesn't store anything.
-pub struct DiscardAppender<T>{
-    mk : core::marker::PhantomData<T>,
-}
-
-impl<T> Clone for DiscardAppender<T>{
-    fn clone(&self) -> Self{
-        Self{
-            mk : self.mk.clone(),
-        }
-    }
-}
-
-impl<T> Copy for DiscardAppender<T>{}
-
-impl<T> Appender<T> for DiscardAppender<T> {
-    fn new_empty() -> Self{
-        Self{
-            mk : core::marker::PhantomData,
-        }
-    }
-    fn push(&mut self, _i : T){}
 }
 
 /// An integer appender.
@@ -180,6 +186,7 @@ impl<I, F> DefLine<I, F> {
     }
 }
 
+
 impl<I, F> DefLine<I, F> where I : Iterator<Item = char>, F : Default + Clone {
     /// Like [DefLine::new_file] but with `F::default()` as file.
     pub fn new<J : IntoIterator<IntoIter = I>>(it : J) -> Self {
@@ -187,9 +194,10 @@ impl<I, F> DefLine<I, F> where I : Iterator<Item = char>, F : Default + Clone {
     }
 }
 
+
 impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
     /// Creates a new [DefLine] with the specified iterator and file.
-    pub fn new_file<J : IntoIterator<IntoIter = I>>(it : J, f : F) -> Self {
+    pub fn new_file<J>(it : J, f : F) -> Self where J : IntoIterator<IntoIter = I> {
         Self{
             iter : it.into_iter(),
             file : f,
@@ -239,6 +247,17 @@ impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
     /// Like [DefLine::next_pos_cf] but discards characters as long as `f` returns `true`.
     pub fn next_pos_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
         self.next_pos_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
+    }
+    /// Next character discarding whitespaces and newline characters.
+    ///
+    /// Removes any whitespace according to
+    /// [predicates::is_whitespace](crate::predicates::is_whitespace).
+    pub fn next_no_spaces(&mut self) -> Pos<Option<char>, F>{
+        self.next_pos_until(crate::predicates::is_whitespace)
+    }
+    /// Next character discarding whitespaces but not newline characters. 
+    pub fn next_nl_no_spaces(&mut self) -> Pos<Option<char>, F>{
+        self.next_pos_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
     }
 }
 
@@ -301,6 +320,10 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     pub fn grab_until<V : Appender<char>, MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<V, F>{
         self.grab_cf(|ch| if f(ch) {ControlFlow::Continue(ch)} else {ControlFlow::Break(())})
     }
+    /// Gets a line
+    pub fn get_line<V : Appender<char>>(&mut self) -> Pos<V, F>{
+        self.grab_until(|ch| ch != '\n')
+    }
     /// Removes leading and trailing characters.
     ///
     /// Every character returned by [DefLine::peek_pos] can be considered a *space* or a *nonspace*
@@ -354,18 +377,18 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
             ControlFlow::Continue(_) => ControlFlow::Continue(ch),
         })
     }
-    ///Removes leading and trailing whitespaces up to the end of line (the `\n` character).
+    ///Gets a line and removes leading and trailing whitespaces.
     ///
     ///See also [DefLine::cap_ht_cf] and [predicate::is_whitespace](crate::predicates::is_whitespace) for the used definition of
     ///whitespace.
-    pub fn cap_spaces_nl<V : AppenderExt<char>>(&mut self) -> Pos<V, F> {
+    pub fn get_line_cap<V : AppenderExt<char>>(&mut self) -> Pos<V, F> {
         self.cap_ht_cf(crate::predicates::is_whitespace, |x| if x == '\n' {ControlFlow::Break(())} else {ControlFlow::Continue(x)})
     }
 
     ///Parse an identifier.
     ///
     ///Gets an identifier defined as a contiguous sequence of alphabetic characters as defined in
-    ///[predicates::is_alphabetic].
+    ///[predicates::is_alphabetic](crate::predicates::is_alphabetic).
     pub fn get_ident<V : Appender<char>>(&mut self) -> Pos<V, F> {
         self.grab_until(crate::predicates::is_alphabetic)
     }
@@ -389,15 +412,16 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
         });
         ret.map(|t| t.0)
     }
-    /// Discards whitespaces and newline characters.
+    /// Peeks character by discarding whitespaces and newline characters.
     ///
-    /// Removes any whitespace according to [predicates::is_whitespace]
-    pub fn discard_spaces(&mut self){
-        self.grab_until::<DiscardAppender<char>, _ >(crate::predicates::is_whitespace);
+    /// Removes any whitespace according to
+    /// [predicates::is_whitespace](crate::predicates::is_whitespace).
+    pub fn peek_no_spaces(&mut self) -> Pos<Option<char>, F>{
+        self.peek_pos_until(crate::predicates::is_whitespace)
     }
-    /// Discards whitespaces but preserves newline characters. 
-    pub fn nl_discard_spaces(&mut self){
-        self.grab_until::<DiscardAppender<char>, _>(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c));
+    /// Peeks character by whitespaces but not newline characters. 
+    pub fn peek_nl_no_spaces(&mut self) -> Pos<Option<char>, F>{
+        self.peek_pos_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
     }
 }
 
