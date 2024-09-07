@@ -21,6 +21,17 @@ use core::ops::ControlFlow;
 use core::fmt::{Formatter, Display};
 use core::write;
 
+/// A placeholder that you can use when you don't want to use the file field in a
+/// [`Position`](crate::pos::Position).
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
+pub struct NoFile;
+
+impl Display for NoFile{
+    fn fmt(&self, _f : &mut Formatter<'_>) -> core::fmt::Result {
+        Ok(())
+    }
+}
+
 /// A position.
 ///
 /// Characters in a text file can be organizes in a virtual grid in order to easily find characters
@@ -33,7 +44,7 @@ use core::write;
 /// Type `F` is any type that can be used to identify a text file, for example a
 /// `String`, a `Path` or a custom type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Position<FILE = ()>{
+pub struct Position<FILE = NoFile> {
     file : FILE,
     r : u32,
     c : u32,
@@ -89,9 +100,14 @@ impl<F> Position<F> where F : Default{
     }
 }
 
-impl<F> Display for Position<F> where F : Display {
+impl<F> Display for Position<F> where F : Display + 'static {
     fn fmt(&self, fmt : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(fmt, "File : {}, line : {}, column : {}", self.file(), self.r, self.c)
+        if (core::any::TypeId::of::<F>()) == (core::any::TypeId::of::<NoFile>()) {
+            write!(fmt, "Line: {}, column: {}", self.r, self.c)
+        }
+        else {
+            write!(fmt, "File: {}, line: {}, column: {}", self.file(), self.r, self.c)
+        }
     }
 }
 
@@ -121,7 +137,7 @@ impl<T, F> AsMut<T> for Pos<T, F> {
     }
 }
 
-impl<T, F> Display for Pos<T, F> where T : Display, F : Display {
+impl<T, F> Display for Pos<T, F> where T : Display, F : Display + 'static {
     fn fmt(&self, fmt : &mut Formatter<'_>) -> core::fmt::Result {
         write!(fmt, "{}: {}", self.pos, self.el)
     }
