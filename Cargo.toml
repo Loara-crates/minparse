@@ -6,8 +6,8 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 keywords = ["parser", "scanner"]
 categories = ["no-std", "parsing"]
-homepage = "https://github.com/Loara-crates/minparse"
-repository = "https://github.com/Loara-crates/minparse"
+homepage = "https://github.com/Loara-crates/minparser"
+repository = "https://github.com/Loara-crates/minparser"
 readme = "README.md"
 
 [features]
