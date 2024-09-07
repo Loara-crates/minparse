@@ -18,6 +18,8 @@
  */
 use core::convert::{AsRef, AsMut};
 use core::ops::ControlFlow;
+use core::fmt::{Formatter, Display};
+use core::write;
 
 /// A position.
 ///
@@ -87,6 +89,12 @@ impl<F> Position<F> where F : Default{
     }
 }
 
+impl<F> Display for Position<F> where F : Display {
+    fn fmt(&self, fmt : &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(fmt, "File : {}, line : {}, column : {}", self.file(), self.r, self.c)
+    }
+}
+
 /// A positioned object, functionally equivalent to a struct containing an object of type `T` (the
 /// wrapped object) and its position as a `Position<FILE>` object.
 ///
@@ -110,6 +118,12 @@ impl<T, F> AsRef<T> for Pos<T, F> {
 impl<T, F> AsMut<T> for Pos<T, F> {
     fn as_mut(&mut self) -> &mut T {
         &mut self.el
+    }
+}
+
+impl<T, F> Display for Pos<T, F> where T : Display, F : Display {
+    fn fmt(&self, fmt : &mut Formatter<'_>) -> core::fmt::Result {
+        write!(fmt, "{}: {}", self.pos, self.el)
     }
 }
 

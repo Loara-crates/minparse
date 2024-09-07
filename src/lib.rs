@@ -49,5 +49,8 @@ pub mod predicates;
 mod pos;
 mod defline;
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub use crate::pos::*;
 pub use crate::defline::*; 

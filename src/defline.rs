@@ -20,9 +20,6 @@ use core::ops::ControlFlow;
 use crate::pos::{Pos, Position, Posable};
 use core::iter::{Iterator, IntoIterator, Peekable};
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 /// An iterator wrapper that removes `\r` characters.
 ///
 /// This crate assumes that `\n` separates lines, so if your iterator uses `\r\n` as line delimiter you
