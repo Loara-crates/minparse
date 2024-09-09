@@ -52,7 +52,8 @@ pub struct Position<FILE = NoFile> {
 
 impl<F> Position<F>{
     /// Create a new `Position` at specified `file`, `line` and `column` indices
-    pub fn new_file(file : F, line : u32, column : u32) -> Self {
+    #[must_use]
+    pub const fn new_file(file : F, line : u32, column : u32) -> Self {
         Self{
             file,
             r : line,
@@ -60,7 +61,8 @@ impl<F> Position<F>{
         }
     }
     /// Create a new `Position` with `line=0` and `column=0`
-    pub fn new_file_zero(file : F) -> Self {
+    #[must_use]
+    pub const fn new_file_zero(file : F) -> Self {
         Self{
             file,
             r : 0,
@@ -68,19 +70,23 @@ impl<F> Position<F>{
         }
     }
     /// Get the file identifier
-    pub fn file(&self) -> &F {
+    #[must_use]
+    pub const fn file(&self) -> &F {
         &self.file
     }
     /// Get the line number
-    pub fn line(&self) -> u32 {
+    #[must_use]
+    pub const fn line(&self) -> u32 {
         self.r
     }
     /// Get the column number
-    pub fn column(&self) -> u32 {
+    #[must_use]
+    pub const fn column(&self) -> u32 {
         self.c
     }
     /// Converts it to a reference
-    pub fn make_ref<'a>(&'a self) -> Position<&'a F> {
+    #[must_use]
+    pub const fn make_ref(&self) -> Position<&F> {
         Position{
             file : &self.file,
             r : self.r,
@@ -90,11 +96,13 @@ impl<F> Position<F>{
 }
 
 impl<F> Position<F> where F : Default{
-    /// Like [Position::new_file] but with `file` argument set to `F::default()`
+    /// Like [`Position::new_file`] but with `file` argument set to `F::default()`
+    #[must_use]
     pub fn new(line : u32, column : u32) -> Self {
         Self::new_file(F::default(), line, column)
     }
-    /// Like [Position::new_file_zero] but with `file` argument set to `F::default()`
+    /// Like [`Position::new_file_zero`] but with `file` argument set to `F::default()`
+    #[must_use]
     pub fn new_zero() -> Self {
         Self::new_file_zero(F::default())
     }
@@ -144,12 +152,12 @@ impl<T, F> Display for Pos<T, F> where T : Display, F : Display + 'static {
 }
 
 impl<T, F> Pos<T, F> {
-    /// Creates a new positioned object. See also [Posable::at]
-    pub fn new(el : T, pos : Position<F>) -> Self {
+    /// Creates a new positioned object. See also [`Posable::at`]
+    pub const fn new(el : T, pos : Position<F>) -> Self {
         Self{el, pos}
     }
-    /// Creates a new positioned object. See also [Posable::at_pos]
-    pub fn new_pos(el : T, file : F, line : u32, column : u32) -> Self {
+    /// Creates a new positioned object. See also [`Posable::at_pos`]
+    pub const fn new_pos(el : T, file : F, line : u32, column : u32) -> Self {
         Self{
             el,
             pos : Position{
@@ -160,15 +168,15 @@ impl<T, F> Pos<T, F> {
         }
     }
     /// Get the file identifier
-    pub fn file(&self) -> &F {
+    pub const fn file(&self) -> &F {
         &self.pos.file
     }
     /// Get the line number
-    pub fn line(&self) -> u32 {
+    pub const fn line(&self) -> u32 {
         self.pos.r
     }
     /// Get the column number
-    pub fn column(&self) -> u32 {
+    pub const fn column(&self) -> u32 {
         self.pos.c
     }
 
@@ -181,7 +189,7 @@ impl<T, F> Pos<T, F> {
         self.mov(ot.pos)
     }
     ///Gets the position
-    pub fn pos(&self) -> &Position<F> {
+    pub const fn pos(&self) -> &Position<F> {
         &self.pos
     }
     ///Consumes the objects and returns the wrapped element
@@ -222,14 +230,14 @@ impl<T, F> Pos<T, F> {
     }
 
     /// Converts it to a reference
-    pub fn make_ref<'a>(&'a self) -> Pos<&'a T, F> where F : Clone {
+    pub fn make_ref(&self) -> Pos<&T, F> where F : Clone {
         Pos{
             el : &(self.el),
             pos : self.pos.clone(),
         }
     }
     /// Converts it to a mutable reference
-    pub fn make_mut<'a>(&'a mut self) -> Pos<&'a mut T, F> where F : Clone {
+    pub fn make_mut(&mut self) -> Pos<&mut T, F> where F : Clone {
         Pos{
             el : &mut(self.el),
             pos : self.pos.clone(),
@@ -240,6 +248,7 @@ impl<T, F> Pos<T, F> {
 impl<T, E, F> Pos<Result<T, E>, F> {
     /// Converts a `Pos<Result<T, E>, F>` into `Result<Pos<T, F>, Pos<E, F>>` that can be used with
     /// the `?` operator 
+    #[allow(clippy::missing_errors_doc)]
     pub fn throw(self) -> Result<Pos<T, F>, Pos<E, F>> {
         let pos = self.pos;
         match self.el {
@@ -255,6 +264,7 @@ impl<T, E, F> Pos<Result<T, E>, F> {
     }
     /// Converts a `Pos<Result<T, E>, F>` into `Result<Pos<T, F>, E>` that can be used with
     /// the `?` operator 
+    #[allow(clippy::missing_errors_doc)]
     pub fn throw_el(self) -> Result<Pos<T, F>, E> {
         match self.el {
             Ok(el) => Ok(Pos{el, pos : self.pos}),
@@ -263,6 +273,7 @@ impl<T, E, F> Pos<Result<T, E>, F> {
     }
     /// Converts a `Pos<Result<T, E>, F>` into `Result<T, Pos<E, F>>` that can be used with
     /// the `?` operator 
+    #[allow(clippy::missing_errors_doc)]
     pub fn throw_err(self) -> Result<T, Pos<E, F>> {
         match self.el {
             Ok(t) => Ok(t),
@@ -272,12 +283,18 @@ impl<T, E, F> Pos<Result<T, E>, F> {
 }
 
 impl<T, F> Pos<Option<T>, F> {
-    /// Applies `Option::ok_or` to the wrapped object and then [Pos::throw] the resulting object
+    /// Applies `Option::ok_or` to the wrapped object and then [`Pos::throw`] the resulting object
+    ///
+    /// # Errors
+    /// If the wrapped value is `None` then trows passed error
     pub fn ok_or<E>(self, err : E) -> Result<Pos<T, F>, Pos<E, F>> {
         self.map(|i| i.ok_or(err)).throw()
     }
-    /// Applies `Option::ok_or` to the wrapped object and then [Pos::throw_err] the resulting
+    /// Applies `Option::ok_or` to the wrapped object and then [`Pos::throw_err`] the resulting
     /// object
+    ///
+    /// # Errors
+    /// If the wrapped value is `None` then trows passed error
     pub fn ok_or_err<E>(self, err : E) -> Result<T, Pos<E, F>> {
         self.map(|i| i.ok_or(err)).throw_err()
     }
@@ -295,7 +312,7 @@ impl<B, C, F> Pos<ControlFlow<B, C>, F> {
     }
 }
 /// This trait allows you to easily create a `Pos<T, F>` object from a `T` object implementing the
-/// `Posable` traits thanks to its methods [Posable::at] and [Posable::at_pos].
+/// `Posable` traits thanks to its methods [`Posable::at`] and [`Posable::at_pos`].
 ///
 /// You don't need `T` to implement `Posable` in order to create a `Pos<T>`, this trait is useful
 /// only if ypu prefer to use `t.at(pos)` in place of `Pos::new(t, pos)`.
