@@ -18,7 +18,7 @@
  */
 use core::ops::ControlFlow;
 use crate::pos::{Pos, Position, Posable, NoFile};
-use core::iter::{Iterator, IntoIterator, Peekable};
+use core::iter::{Iterator, IntoIterator, Peekable, FusedIterator};
 
 /// An iterator wrapper that removes `\r` characters.
 ///
@@ -48,7 +48,14 @@ impl<I> Iterator for NLIterator<I> where I : Iterator<Item = char>{
             }
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // This adapter can reduce our iterator length by a value known only at runtime
+        (0, self.iter.size_hint().1)
+    }
 }
+
+impl<I> FusedIterator for NLIterator<I> where I : FusedIterator + Iterator<Item = char> {}
 
 /// A sequential container that can accept new objects.
 ///
@@ -68,7 +75,7 @@ pub trait AppenderExt<T> : Appender<T>{
     /// Clears the container
     fn clear(&mut self);
     /// Pushes all the elements of `a` into `self` and then clears `a`.
-    fn drain(&mut self, a : &mut Self);
+    fn append(&mut self, a : &mut Self);
 }
 
 #[cfg(feature = "alloc")]
@@ -88,9 +95,9 @@ impl AppenderExt<char> for alloc::string::String{
     fn clear(&mut self){
         self.clear();
     }
-    fn drain(&mut self, a : &mut Self){
+    fn append(&mut self, a : &mut Self){
         self.push_str(a);
-        a.clear();
+        a.clear();  //push_str doesn't clear a unlike append in Vec
     }
 }
 #[cfg(feature = "alloc")]
@@ -107,9 +114,38 @@ impl<T> AppenderExt<T> for alloc::vec::Vec<T>{
     fn is_empty(&self) -> bool{
         (self as &Self).is_empty()
     }
-    fn drain(&mut self, a : &mut Self){
+    fn append(&mut self, a : &mut Self){
         self.append(a);
-        a.clear();
+    }
+    fn clear(&mut self){
+        self.clear();
+    }
+}
+#[cfg(feature = "alloc")]
+impl<T> Appender<T> for alloc::collections::LinkedList<T>{
+    fn new_empty() -> Self{
+        Self::new()
+    }
+    fn push(&mut self, i : T){
+        self.push_back(i);
+    }
+}
+#[cfg(feature = "alloc")]
+impl<T> Appender<T> for alloc::collections::VecDeque<T>{
+    fn new_empty() -> Self{
+        Self::new()
+    }
+    fn push(&mut self, i : T){
+        self.push_back(i);
+    }
+}
+#[cfg(feature = "alloc")]
+impl<T> AppenderExt<T> for alloc::collections::VecDeque<T>{
+    fn is_empty(&self) -> bool{
+        (self as &Self).is_empty()
+    }
+    fn append(&mut self, a : &mut Self){
+        self.append(a);
     }
     fn clear(&mut self){
         self.clear();
@@ -348,11 +384,11 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
                     else{
                         if ret.is_empty() {
                             pos = Some(self.peek_pos().take_pos());
+                            spcs.clear();
                         }
                         else {
-                            ret.drain(&mut spcs);
+                            ret.append(&mut spcs);
                         }
-                        spcs.clear();
                         ret.push(k);
                     }
                     self.discard();
