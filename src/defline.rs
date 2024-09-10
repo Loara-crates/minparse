@@ -59,7 +59,7 @@ impl<I> FusedIterator for NLIterator<I> where I : FusedIterator + Iterator<Item 
 
 /// A sequential container that can accept new objects.
 ///
-/// This trait is used by [`DefLine::grab_cf`] and similar methods in [`DefLine`].
+/// This trait is used by [`DefLine::append_cf`] and similar methods in [`DefLine`].
 pub trait Appender<T>{
     /// Creates a new empty container.
     fn new_empty() -> Self;
@@ -68,7 +68,7 @@ pub trait Appender<T>{
 }
 /// A sequential container with additional functionalities.
 ///
-/// This trait is used by [`DefLine::cap_ht_cf`] and similar methods in [`DefLine`].
+/// This trait is used by [`DefLine::append_trim_cf`] and similar methods in [`DefLine`].
 pub trait AppenderExt<T> : Appender<T>{
     /// Tests if the container is empty
     fn is_empty(&self) -> bool;
@@ -264,7 +264,7 @@ impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
     /// Discards characters as long as [`Self::next_pos`] returns `Some(ch)` and `f(ch)` returns [``ControlFlow::Continue``](https://doc.rust-lang.org/stable/core/ops/enum.ControlFlow.html#variant.Continue). 
     ///
     /// When `f(ch)` returns [``ControlFlow::Break(t)``](https://doc.rust-lang.org/stable/core/ops/enum.ControlFlow.html#variant.Break) then this function will return `Some(t)`.
-    pub fn next_pos_cf<T, MF : FnMut(char) -> ControlFlow<T>>(&mut self, mut f : MF) -> Pos<Option<T>, F> {
+    pub fn dig_char_cf<T, MF : FnMut(char) -> ControlFlow<T>>(&mut self, mut f : MF) -> Pos<Option<T>, F> {
         loop {
             let (rs, pos) = self.next_pos().take_all();
             match rs {
@@ -277,20 +277,117 @@ impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
         }
     }
 
-    /// Like [`DefLine::next_pos_cf`] but discards characters as long as `f` returns `true`.
-    pub fn next_pos_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
-        self.next_pos_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
+    /// Like [`DefLine::dig_char_cf`] but discards characters as long as `f` returns `true`.
+    pub fn dig_char_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
+        self.dig_char_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
     }
-    /// Next character discarding whitespaces and newline characters.
+    /// Gets the first not-whitespace character.
     ///
     /// Removes any whitespace according to
     /// [`predicates::is_whitespace`](crate::predicates::is_whitespace).
     pub fn next_no_spaces(&mut self) -> Pos<Option<char>, F>{
-        self.next_pos_until(crate::predicates::is_whitespace)
+        self.dig_char_until(crate::predicates::is_whitespace)
     }
-    /// Next character discarding whitespaces but not newline characters. 
+    /// As [`Self::next_no_spaces`] but threats the `\n` character as not whitespace. 
     pub fn next_nl_no_spaces(&mut self) -> Pos<Option<char>, F>{
-        self.next_pos_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
+        self.dig_char_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
+    }
+    /// Appends characters to an accumulator.
+    ///
+    /// Every time [`Self::next_pos`] returns `Some(ch)` and `f(ch)` returns
+    /// ``ControlFlow::Continue(k)`` then `k` is pushed into an accumulator of type `V`.
+    /// When `f(ch)` returns instead `ControlFlow::Break(z)` then both `Some(z)` and the accumulator are
+    /// returned. 
+    ///
+    /// Notice that, unlike [`Self::append_cf`], `ch` will always be discarded. 
+    pub fn append_delim_cf<V : Appender<K>, K, Z, MF : FnMut(char) -> ControlFlow<Z, K>>(&mut self, mut f : MF) -> (Pos<V, F>, Pos<Option<Z>, F>) {
+        let mut ret = V::new_empty();
+        let (mut och, mut rpos) = self.next_pos().take_all();
+        let pos = rpos.clone();
+        let mut rz = None;
+        while let Some(ch) = och {
+                    match f(ch) {
+                        ControlFlow::Continue(k) => {
+                            ret.push(k);
+                        }
+                        ControlFlow::Break(z) => {
+                            rz = Some(z);
+                            break;
+                        }
+                    }
+            (och, rpos) = self.next_pos().take_all();
+        }
+        (Pos::new(ret, pos), Pos::new(rz, rpos))
+    }
+    /// Like [`DefLine::append_delim_cf`] but appends characters as long as `f` returns `true`.
+    pub fn append_delim_until<V : Appender<char>, MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> (Pos<V, F>, Pos<Option<char>, F>){
+        self.append_delim_cf(|ch| if f(ch) {ControlFlow::Continue(ch)} else {ControlFlow::Break(ch)})
+    }
+    /// Removes leading and trailing characters.
+    ///
+    /// Every character returned by [`DefLine::next_pos`] can be considered a *space* or a *nonspace*
+    /// character depending on whether `sp` returns `true` or `false`. Until function `cf` returns
+    /// `ControlFlow::Continue` retrieved characters are stores in a container of type `V` and when
+    /// `cf` returns `ControlFlow::Break` then leading and trailing *spaces* are removed from the
+    /// returned container.
+    ///
+    /// If the returned container is not empty then the returned position is exactly the position
+    /// of the first *nonspace* appended character, otherwise it is the position of the first
+    /// character that terminated the accumulation.
+    pub fn append_delim_trim_cf<V : AppenderExt<K>, K, Z, SP : FnMut(char) -> bool, CF : FnMut(char) -> ControlFlow<Z, K>>(&mut self, mut sp : SP, mut cf : CF) -> (Pos<V, F>, Pos<Option<Z>, F>) {
+        let mut ret = V::new_empty();
+        let mut spcs = V::new_empty();
+
+        let (mut och, mut cpos) = self.next_pos().take_all();
+        let mut rz = None;
+
+        let mut pos = None;
+
+        while let Some(ch) = och {
+            match cf(ch) {
+                ControlFlow::Break(z) => {
+                    rz = Some(z);
+                    break;
+                }
+                ControlFlow::Continue(k) => {
+                    if sp(ch) {
+                        spcs.push(k);
+                    }
+                    else{
+                        if ret.is_empty() {
+                            pos = Some(cpos.clone());
+                            spcs.clear();
+                        }
+                        else {
+                            ret.append(&mut spcs);
+                        }
+                        ret.push(k);
+                    }
+                }
+            }
+            (och, cpos) = self.next_pos().take_all();
+        }
+        (Pos::new(ret, pos.unwrap_or_else(|| cpos.clone())), Pos::new(rz, cpos))
+    }
+    /// Like [`Self::append_delim_trim_cf`] but continue appending characters as long as `cf`
+    /// returns `true`.
+    pub fn append_delim_trim_until<V : AppenderExt<char>, SP : FnMut(char) -> bool, CF : FnMut(char) -> bool>(&mut self, sp : SP, mut cf : CF) -> (Pos<V, F>, Pos<Option<char>, F>) {
+        self.append_delim_trim_cf(sp, |c| if cf(c) {ControlFlow::Continue(c)} else {ControlFlow::Break(c)})
+    }
+    /// Retrieves a line.
+    ///
+    /// A line is a sequence of characters terminated by a `\n` character or up to the end of the
+    /// iterator. Notice that the eventual `\n` character is discarded and not added to the
+    /// returned line.
+    pub fn get_line<V : Appender<char>>(&mut self) -> Pos<V, F>{
+        self.append_delim_until(|ch| ch != '\n').0
+    }
+    ///Gets a line and removes leading and trailing whitespaces.
+    ///
+    ///See also [`DefLine::append_delim_trim_cf`] and [`predicate::is_whitespace`](crate::predicates::is_whitespace) for the used definition of
+    ///whitespace.
+    pub fn get_line_trim<V : AppenderExt<char>>(&mut self) -> Pos<V, F> {
+        self.append_delim_trim_until(crate::predicates::is_whitespace, |x| x != '\n' ).0
     }
 }
 
@@ -299,9 +396,9 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     pub fn peek_pos(&mut self) -> Pos<Option<char>, F> {
         return Pos::new_pos(self.iter.peek().copied(), self.file.clone(), self.r, self.c);
     } 
-    /// Like [`DefLine::next_pos_cf`] but when `f(ch)` returns [``ControlFlow::Break``](https://doc.rust-lang.org/stable/core/ops/enum.ControlFlow.html#variant.Break)
+    /// Like [`DefLine::dig_char_cf`] but when `f(ch)` returns [``ControlFlow::Break``](https://doc.rust-lang.org/stable/core/ops/enum.ControlFlow.html#variant.Break)
     /// then `ch` is not removed from the underlying iterator.
-    pub fn peek_pos_cf<T, MF : FnMut(char) -> ControlFlow<T>>(&mut self, mut f : MF) -> Pos<Option<T>, F> {
+    pub fn dig_peek_cf<T, MF : FnMut(char) -> ControlFlow<T>>(&mut self, mut f : MF) -> Pos<Option<T>, F> {
         loop {
             let (rs, pos) = self.peek_pos().take_all();
             match rs {
@@ -313,10 +410,10 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
             }
         }
     }
-    /// Like [`DefLine::next_pos_until`] but when `f(ch)` returns `false` then `ch` is not removed from
+    /// Like [`DefLine::dig_char_until`] but when `f(ch)` returns `false` then `ch` is not removed from
     /// the underlying iterator.
-    pub fn peek_pos_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
-        self.peek_pos_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
+    pub fn dig_peek_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
+        self.dig_peek_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
     }
     /// Discard the last character in the iterator
     pub fn discard(&mut self) {
@@ -328,7 +425,7 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     /// ``ControlFlow::Continue(k)`` then `ch` is discarded and `k` is pushed into an accumulator of type `V`.
     /// When `f(ch)` returns instead `ControlFlow::Break` then `ch` is not discarded and the used
     /// accumulator is returned.
-    pub fn grab_cf<V : Appender<K>, K, MF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut f : MF) -> Pos<V, F> {
+    pub fn append_cf<V : Appender<K>, K, MF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut f : MF) -> Pos<V, F> {
         let mut ret = V::new_empty();
         let pos = self.peek_pos().pos().clone();
         loop {
@@ -349,13 +446,12 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
         }
         Pos::new(ret, pos)
     }
-    /// Like [`DefLine::grab_cf`] but appends characters as long as `f` returns `true`.
-    pub fn grab_until<V : Appender<char>, MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<V, F>{
-        self.grab_cf(|ch| if f(ch) {ControlFlow::Continue(ch)} else {ControlFlow::Break(())})
-    }
-    /// Gets a line
-    pub fn get_line<V : Appender<char>>(&mut self) -> Pos<V, F>{
-        self.grab_until(|ch| ch != '\n')
+    /// Like [`DefLine::append_cf`] but appends characters as long as `f` returns `true`.
+    ///
+    /// Moreover, when `f(ch)` returns `true` then `ch` is not discarded from the unerlying
+    /// iterator.
+    pub fn append_until<V : Appender<char>, MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<V, F>{
+        self.append_cf(|ch| if f(ch) {ControlFlow::Continue(ch)} else {ControlFlow::Break(())})
     }
     /// Removes leading and trailing characters.
     ///
@@ -368,7 +464,7 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     /// If the returned container is not empty then the returned position is exactly the position
     /// of the first *nonspace* appended character, otherwise it is the position of the first
     /// character that terminated the accumulation.
-    pub fn cap_ht_cf<V : AppenderExt<K>, K, SP : FnMut(char) -> bool, CF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut sp : SP, mut cf : CF) -> Pos<V, F> {
+    pub fn append_trim_cf<V : AppenderExt<K>, K, SP : FnMut(char) -> bool, CF : FnMut(char) -> ControlFlow<(), K>>(&mut self, mut sp : SP, mut cf : CF) -> Pos<V, F> {
         let mut ret = V::new_empty();
         let mut spcs = V::new_empty();
 
@@ -402,47 +498,35 @@ impl<I, F> DefLine<Peekable<I>, F> where I : Iterator<Item = char>, F : Clone {
     }
     ///Removes leading and trailing whitespaces.
     ///
-    ///See also [`DefLine::cap_ht_cf`] and [`predicates::is_whitespace`](crate::predicates::is_whitespace) for the used definition of
+    ///See also [`DefLine::append_trim_cf`] and [`predicates::is_whitespace`](crate::predicates::is_whitespace) for the used definition of
     ///whitespace.
-    pub fn cap_spaces<V : AppenderExt<char>, CF : FnMut(char) -> ControlFlow<()>>(&mut self, mut f : CF) -> Pos<V, F> {
-        self.cap_ht_cf(crate::predicates::is_whitespace, |ch| match f(ch) {
-            ControlFlow::Break(()) => ControlFlow::Break(()),
-            ControlFlow::Continue(()) => ControlFlow::Continue(ch),
-        })
+    pub fn trim_spaces_until<V : AppenderExt<char>, CF : FnMut(char) -> bool>(&mut self, mut f : CF) -> Pos<V, F> {
+        self.append_trim_cf(crate::predicates::is_whitespace, |ch| if f(ch) {ControlFlow::Continue(ch)} else {ControlFlow::Break(())})
     }
-    ///Gets a line and removes leading and trailing whitespaces.
-    ///
-    ///See also [`DefLine::cap_ht_cf`] and [`predicate::is_whitespace`](crate::predicates::is_whitespace) for the used definition of
-    ///whitespace.
-    pub fn get_line_cap<V : AppenderExt<char>>(&mut self) -> Pos<V, F> {
-        self.cap_ht_cf(crate::predicates::is_whitespace, |x| if x == '\n' {ControlFlow::Break(())} else {ControlFlow::Continue(x)})
-    }
-
-    ///Parse an identifier.
+    
+    ///Parse an identifier by dircarding leading whitespaces and without changing line.
     ///
     ///Gets an identifier defined as a contiguous sequence of alphabetic characters as defined in
     ///[`predicates::is_alphabetic`](crate::predicates::is_alphabetic).
     pub fn get_ident<V : Appender<char>>(&mut self) -> Pos<V, F> {
-        self.grab_until(crate::predicates::is_alphabetic)
+        self.peek_spaces_nonl();
+        self.append_until(crate::predicates::is_alphabetic)
     }
-    ///Parses a decimal number.
-    pub fn get_num(&mut self) -> Pos<Option<u32>, F> {
-        self.grab_cf::<NumAppender<u32, 10>, _, _>(|c| c.to_digit(10).map_or(ControlFlow::Break(()), ControlFlow::Continue)).map(|t| t.0)
-    }
-    /// Parses an hexadecimal number (without the prefix).
-    pub fn get_hex_num(&mut self) -> Pos<Option<u32>, F> {
-        self.grab_cf::<NumAppender<u32, 16>, _, _>(|c| c.to_digit(16).map_or(ControlFlow::Break(()), ControlFlow::Continue)).map(|t| t.0)
+    ///Parses a decimal number and removes leading and trailing spaces in the same line.
+    pub fn get_num_nonl(&mut self) -> Pos<Option<u32>, F> {
+        self.peek_spaces_nonl();
+        self.append_cf::<NumAppender<u32, 10>, _, _>(|c| c.to_digit(10).map_or(ControlFlow::Break(()), ControlFlow::Continue)).map(|t| t.0)
     }
     /// Peeks character by discarding whitespaces and newline characters.
     ///
     /// Removes any whitespace according to
     /// [`predicates::is_whitespace`](crate::predicates::is_whitespace).
-    pub fn peek_no_spaces(&mut self) -> Pos<Option<char>, F>{
-        self.peek_pos_until(crate::predicates::is_whitespace)
+    pub fn peek_spaces(&mut self) -> Pos<Option<char>, F>{
+        self.dig_peek_until(crate::predicates::is_whitespace)
     }
     /// Peeks character by whitespaces but not newline characters. 
-    pub fn peek_nl_no_spaces(&mut self) -> Pos<Option<char>, F>{
-        self.peek_pos_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
+    pub fn peek_spaces_nonl(&mut self) -> Pos<Option<char>, F>{
+        self.dig_peek_until(|c| crate::predicates::is_whitespace(c) && !crate::predicates::is_newline(c))
     }
 }
 

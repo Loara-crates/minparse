@@ -42,7 +42,8 @@ impl Display for NoFile{
 /// and the character index inside thai line (also called the _column_).
 ///
 /// Type `F` is any type that can be used to identify a text file, for example a
-/// `String`, a `Path` or a custom type.
+/// `String`, a `Path` or a custom type. If you work on a single file and/or you don't want to take
+/// in account the used file just put [`NoFile`] as `F` or don't specify `F`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Position<FILE = NoFile> {
     file : FILE,
@@ -129,7 +130,7 @@ impl<F> Display for Position<F> where F : Display + 'static {
 /// This type associates to a type `T` (usually a token) a [Position] that allows the user to locate it inside
 /// the file
 #[derive(Clone, Copy, Debug)]
-pub struct Pos<T, FILE = ()> {
+pub struct Pos<T, FILE = NoFile> {
     el : T,
     pos : Position<FILE>,
 }
@@ -329,7 +330,9 @@ pub trait Posable where Self : Sized{
     }
 }
 
-impl<T : Posable> Posable for Option<T> {}
-impl<T : Posable, E : Posable> Posable for Result<T, E> {}
+impl<T> Posable for Option<T> where T : Posable {}
+impl<T, E> Posable for Result<T, E> where T : Posable, E : Posable {}
 impl Posable for char {}
+#[cfg(feature = "alloc")]
+impl Posable for alloc::string::String {}
 
