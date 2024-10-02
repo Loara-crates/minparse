@@ -18,7 +18,8 @@
  */
 use core::convert::{AsRef, AsMut};
 use core::ops::ControlFlow;
-use core::fmt::{Formatter, Display};
+use core::fmt::{Formatter, Display, Debug};
+use core::error::Error;
 use core::write;
 
 /// A placeholder that you can use when you don't want to use the file field in a
@@ -149,6 +150,12 @@ impl<T, F> AsMut<T> for Pos<T, F> {
 impl<T, F> Display for Pos<T, F> where T : Display, F : Display + 'static {
     fn fmt(&self, fmt : &mut Formatter<'_>) -> core::fmt::Result {
         write!(fmt, "{}: {}", self.pos, self.el)
+    }
+}
+
+impl<T, F> Error for Pos<T, F> where T : Error, F : Display + Debug + 'static {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.el.source()
     }
 }
 

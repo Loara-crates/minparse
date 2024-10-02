@@ -281,6 +281,26 @@ impl<I, F > DefLine<I, F> where I  : Iterator<Item = char>, F : Clone {
     pub fn dig_char_until<MF : FnMut(char) -> bool>(&mut self, mut f : MF) -> Pos<Option<char>, F> {
         self.dig_char_cf(|ch| if f(ch) {ControlFlow::Continue(())} else {ControlFlow::Break(ch)})
     }
+    /// Like [`DefLine::dig_char_cf`] but `f` may fail.
+    pub fn try_dig_char_cf<T, E, MF : FnMut(char) -> Result<ControlFlow<T>, E>>(&mut self, mut f : MF) -> Pos<Result<Option<T>, E>, F> {
+        loop {
+            let (rs, pos) = self.next_pos().take_all();
+            match rs {
+                None => return Pos::new(Ok(None), pos),
+                Some(ch) => match f(ch) {
+                    Ok(cc) => match cc {
+                        ControlFlow::Break(c) => return Pos::new(Ok(Some(c)), pos),
+                        ControlFlow::Continue(()) => {}
+                    },
+                    Err(e) => return Pos::new(Err(e), pos),
+                }
+            }
+        }
+    }
+    /// Like [`DefLine::dig_char_until`] but `f` may fail.
+    pub fn try_dig_char_until<E, MF : FnMut(char) -> Result<bool, E>>(&mut self, mut f : MF) -> Pos<Result<Option<char>, E>, F> {
+        self.try_dig_char_cf(|ch| if f(ch)? {Ok(ControlFlow::Continue(()))} else {Ok(ControlFlow::Break(ch))})
+    }
     /// Gets the first not-whitespace character.
     ///
     /// Removes any whitespace according to
