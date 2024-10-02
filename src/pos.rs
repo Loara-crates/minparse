@@ -254,6 +254,40 @@ impl<T, F> Pos<T, F> {
 }
 
 impl<T, E, F> Pos<Result<T, E>, F> {
+    /// Build result from output
+    pub fn from_output(out : Pos<T, F>) -> Self {
+        Self{
+            el : Ok(out.el),
+            pos : out.pos,
+        }
+    }
+    /// Build result from residual
+    #[allow(clippy::missing_panics_doc)]
+    pub fn from_residual(out : Pos<Result<core::convert::Infallible, E>, F>) -> Self {
+        Self{
+            el : match out.el {
+                Err(e) => Err(e),
+                Ok(_) => panic!("Infallible"),
+            },
+            pos : out.pos,
+        }
+    }
+    ///Branch
+    pub fn branch(self) -> ControlFlow<Pos<Result<core::convert::Infallible, E>, F>, Pos<T, F>>{
+        let pos = self.pos;
+        match self.el {
+            Ok(t) => ControlFlow::Continue(Pos{
+                el : t,
+                pos,
+            }),
+            Err(e) => ControlFlow::Break(Pos{
+                el : Err(e),
+                pos,
+            }),
+        }
+    }
+
+
     /// Converts a `Pos<Result<T, E>, F>` into `Result<Pos<T, F>, Pos<E, F>>` that can be used with
     /// the `?` operator 
     #[allow(clippy::missing_errors_doc)]
